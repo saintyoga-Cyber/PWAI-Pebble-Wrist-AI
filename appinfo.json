@@ -3,7 +3,7 @@
   "shortName": "PWAI",
   "longName": "Pebble Wrist AI",
   "companyName": "saintyoga-Cyber",
-  "versionLabel": "0.1.0",
+  "versionLabel": "0.2.0",
   "sdkVersion": "3",
   "watchapp": {
     "watchface": false
@@ -12,17 +12,18 @@
   "resources": {
     "media": []
   },
-  "appKeys": {
-    "KEY_MSG_TYPE":    0,
-    "KEY_CHUNK_IDX":   1,
-    "KEY_CHUNK_TOTAL": 2,
-    "KEY_CHUNK_DATA":  3,
-    "KEY_JOB_ID":      4,
-    "KEY_STATUS":      5,
-    "KEY_PROVIDER":    6,
-    "KEY_COMMAND":     7,
-    "KEY_PROMPT":      8,
-    "KEY_TOKEN":       9
-  },
+  "messageKeys": [
+    "UserMessage",
+    "ResponseChunkIndex",
+    "ResponseChunkTotal",
+    "ResponseChunkText",
+    "ChunkAck",
+    "ErrorCode",
+    "ResetConversation",
+    "CancelInflight",
+    "FontSize",
+    "Provider",
+    "TimelineToken"
+  ],
   "targetPlatforms": ["aplite", "basalt", "chalk", "diorite", "emery"]
 }
