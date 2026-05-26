@@ -6,6 +6,12 @@
  *   POST /chat           — queue prompt, return jobId immediately
  *   GET  /status/:jobId  — poll job status
  *   POST /pin            — push Timeline pin to Rebble
+ *   POST /reminder       — create iOS Reminder via Claude tool-use
+ *                          returns { jobId, status:'pending' }
+ *                          /status/:jobId will resolve to:
+ *                            { status:'ready',   reply:'Reminder set: ...' }
+ *                            { status:'tool_failed', reply:'...' }  ← JS triggers Shortcut fallback
+ *                            { status:'error',   error:'...' }
  *
  * Bindings: DB (D1), PERPLEXITY_API_KEY, ANTHROPIC_API_KEY (secrets)
  */
@@ -66,9 +72,29 @@ export default {
       return jsonRes({ ok: true, pinId: result.pinId });
     }
 
+    // ── /reminder ────────────────────────────────────────────────────────────
+    // Uses Claude tool_use to create an iOS Reminder.
+    // If Claude signals tool_use is unavailable or the tool call fails,
+    // job resolves with status:'tool_failed' so the JS layer can trigger
+    // the iOS Shortcut fallback instead.
+    if (method === 'POST' && path === '/reminder') {
+      const body = await request.json().catch(() => ({}));
+      const { token, text, dueDate, dueTime } = body;
+      if (!token || !text)
+        return jsonRes({ error: 'token and text required' }, 400);
+      const jobId = crypto.randomUUID();
+      await env.DB.prepare(
+        `INSERT INTO jobs (id, token, provider, prompt, status) VALUES (?, ?, 'claude', ?, 'pending')`
+      ).bind(jobId, token, text).run();
+      ctx.waitUntil(processReminderJob(env, jobId, token, text, dueDate || null, dueTime || null));
+      return jsonRes({ jobId, status: 'pending' });
+    }
+
     return jsonRes({ error: 'not found' }, 404);
   }
 };
+
+// ── Chat job processor ────────────────────────────────────────────────────────
 
 async function processJob(env, jobId, token, provider, prompt) {
   try {
@@ -94,6 +120,105 @@ async function processJob(env, jobId, token, provider, prompt) {
     ).bind(msg, jobId).run();
   }
 }
+
+// ── Reminder job processor ────────────────────────────────────────────────────
+
+// The tool schema we send to Claude so it can invoke iOS Reminders.
+const REMINDER_TOOL = {
+  name: 'create_reminder',
+  description: 'Create a reminder in the user\'s iOS Reminders app. Call this with the reminder text and optional due date/time.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      title: {
+        type: 'string',
+        description: 'The reminder title / task text.'
+      },
+      due_date: {
+        type: 'string',
+        description: 'ISO 8601 date string (YYYY-MM-DD) for the reminder due date. Omit if no date was specified.'
+      },
+      due_time: {
+        type: 'string',
+        description: 'HH:MM (24-hour) due time. Omit if no time was specified.'
+      },
+      notes: {
+        type: 'string',
+        description: 'Optional extra notes to attach to the reminder.'
+      }
+    },
+    required: ['title']
+  }
+};
+
+async function processReminderJob(env, jobId, token, text, dueDate, dueTime) {
+  try {
+    // Build a user message that describes the reminder request clearly.
+    const userContent = dueDate
+      ? `Create a reminder: "${text}" — due ${dueDate}${dueTime ? ' at ' + dueTime : ''}.`
+      : `Create a reminder: "${text}"`;
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key':         env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type':      'application/json'
+      },
+      body: JSON.stringify({
+        model:      'claude-sonnet-4-20250514',
+        max_tokens: 256,
+        tools:      [REMINDER_TOOL],
+        tool_choice: { type: 'required', name: 'create_reminder' },
+        messages:   [{ role: 'user', content: userContent }]
+      })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      // Claude API hard error — mark tool_failed so JS triggers Shortcut.
+      const msg = data.error?.message || 'Claude API error ' + res.status;
+      await env.DB.prepare(
+        `UPDATE jobs SET status = 'tool_failed', error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).bind(msg, jobId).run();
+      return;
+    }
+
+    // Look for a tool_use content block.
+    const toolBlock = (data.content || []).find(b => b.type === 'tool_use' && b.name === 'create_reminder');
+
+    if (!toolBlock) {
+      // Claude responded but didn't call the tool — treat as tool_failed.
+      const fallbackMsg = (data.content || []).map(b => b.text || '').join('').trim()
+        || 'Claude did not call create_reminder';
+      await env.DB.prepare(
+        `UPDATE jobs SET status = 'tool_failed', error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).bind(fallbackMsg, jobId).run();
+      return;
+    }
+
+    // Tool was called — build a human-readable confirmation for the watch.
+    const input = toolBlock.input || {};
+    let confirmation = 'Reminder set: ' + (input.title || text);
+    if (input.due_date) {
+      confirmation += ' on ' + input.due_date;
+      if (input.due_time) confirmation += ' at ' + input.due_time;
+    }
+
+    await env.DB.prepare(
+      `UPDATE jobs SET status = 'ready', reply = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(confirmation, jobId).run();
+
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    await env.DB.prepare(
+      `UPDATE jobs SET status = 'tool_failed', error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(msg, jobId).run();
+  }
+}
+
+// ── AI helpers ────────────────────────────────────────────────────────────────
 
 async function callPerplexity(env, history, prompt) {
   const messages = buildMessages(history, prompt);
@@ -129,6 +254,8 @@ async function callClaude(env, history, prompt) {
   if (!res.ok) throw new Error(data.error?.message || 'Claude error ' + res.status);
   return (data.content || []).map(b => b.text || '').join('');
 }
+
+// ── Timeline helpers ──────────────────────────────────────────────────────────
 
 async function pushPin(token, title, body, pinTime) {
   const pinId = crypto.randomUUID();
