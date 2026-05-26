@@ -11,6 +11,9 @@ static FontChoice    s_font             = FONT_MEDIUM;
 static int           s_dictation_status = 0;
 static int           s_provider         = 0; // 0=Perplexity, 1=Claude
 
+// Critical-2: timestamp (ms) recorded when STATE_WAITING is entered.
+static uint32_t      s_query_start_ms   = 0;
+
 static Turn s_turns[MAX_TURNS];
 static int  s_turn_count   = 0;
 static char *s_pending_user = NULL;
@@ -49,6 +52,7 @@ void state_init(void) {
   s_state = STATE_IDLE; s_last_error = ERR_NONE;
   s_turn_count = 0; memset(s_turns, 0, sizeof(s_turns));
   s_pending_user = NULL;
+  s_query_start_ms = 0;
   update_ui_for_state(s_state);
 }
 
@@ -74,8 +78,27 @@ static const char *state_name(AppState s) {
 
 void state_set(AppState next) {
   APP_LOG(APP_LOG_LEVEL_INFO, "STATE: %s->%s", state_name(s_state), state_name(next));
+  // Critical-2: stamp the clock the instant we begin waiting for the AI reply.
+  if (next == STATE_WAITING) {
+    s_query_start_ms = (uint32_t)time_ms(NULL, NULL);
+  }
   s_state = next;
   update_ui_for_state(next);
+}
+
+// Critical-2: called externally only if needed; state_set() handles it automatically.
+void state_mark_query_start(void) {
+  s_query_start_ms = (uint32_t)time_ms(NULL, NULL);
+}
+
+// Critical-2: returns elapsed ms since the query was sent, or 0 if never started.
+uint32_t state_query_elapsed_ms(void) {
+  if (s_query_start_ms == 0) return 0;
+  uint32_t now_ms = (uint32_t)time_ms(NULL, NULL);
+  // Handle millisecond counter wrap (unlikely but safe).
+  return (now_ms >= s_query_start_ms)
+    ? (now_ms - s_query_start_ms)
+    : (0xFFFFFFFFu - s_query_start_ms + now_ms + 1u);
 }
 
 OwuiErrorCode state_last_error(void)   { return s_last_error; }
