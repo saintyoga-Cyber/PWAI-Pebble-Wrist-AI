@@ -2,14 +2,22 @@ name = "pwai-worker"
 main = "src/index.js"
 compatibility_date = "2026-05-21"
 
-# ── D1 database ──────────────────────────────────────────────────────────────
-# 1. Run: wrangler d1 create pebbleai
-# 2. Paste the returned database_id below.
+# Durable Objects require the migrations block and a [[durable_objects.bindings]] entry.
+# After deploying for the first time, Cloudflare will provision the DO class automatically.
+[[durable_objects.bindings]]
+name = "JOB_SOCKET"
+class_name = "JobSocket"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["JobSocket"]
+
+# ── D1 database ─────────────────────────────────────────────────────────────────────────────
 [[d1_databases]]
 binding       = "DB"
 database_name = "pebbleai"
-database_id   = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id   = "cc7563a6-8dd6-4fc8-bcee-669c054f2935"
 
-# ── Secrets (set via CLI, never hardcode here)
+# ── Secrets (set via CLI, never hardcode here) ────────────────────────────────
 # wrangler secret put PERPLEXITY_API_KEY
 # wrangler secret put ANTHROPIC_API_KEY
