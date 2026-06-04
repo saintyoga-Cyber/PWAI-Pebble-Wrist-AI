@@ -1,5 +1,6 @@
 #include "transport.h"
 #include "state.h"
+#include "message_keys.h"
 #include <string.h>
 
 static TransportResponseHandler s_on_response = NULL;
@@ -90,6 +91,11 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
     char *owned = s_buffer;
     s_buffer = NULL;
     free_buffer();
+    // Critical-4: signal the background worker that a reply is ready.
+    // The worker polls this key every 30 s; if the foreground app is closed
+    // it fires WORKER_MSG_REPLY_READY to wake it. The foreground app clears
+    // this flag in on_response() (main.c) after displaying the reply.
+    persist_write_int(PERSIST_KEY_PENDING_JOB, 1);
     if (s_on_response) s_on_response(owned);
   }
 }
