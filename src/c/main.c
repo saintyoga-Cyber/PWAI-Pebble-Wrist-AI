@@ -1,5 +1,5 @@
 /*
- * PWAI v0.2 — Pebble Wrist AI
+ * PWAI v0.3 — Pebble Wrist AI
  *
  * C layer: thin coordinator. All state lives in state.c.
  * UI layers: ui_idle, ui_spinner, ui_response.
@@ -9,6 +9,13 @@
  * PWAI additions over open-pebble-ai:
  *   - UP/DOWN on idle screen selects Perplexity vs Claude
  *   - transport_send_provider() keeps JS side in sync
+ *
+ * Critical-2: haptic gate
+ *   - vibes_short_pulse() fires in on_response() ONLY when the AI reply
+ *     took >= HAPTIC_GATE_MS (5 seconds) to arrive.
+ *   - Fast, immediate replies are silent — no buzz spam.
+ *   - Slow or background replies (network hiccup, Claude reasoning, etc.)
+ *     get a single buzz to alert the user without them watching the screen.
  */
 
 #include <pebble.h>
@@ -19,6 +26,10 @@
 #include "ui_spinner.h"
 #include "ui_response.h"
 #include "message_keys.h"
+
+// Minimum elapsed query time (ms) before a haptic buzz fires on reply.
+// 5 000 ms = 5 seconds. Tune freely: 3000 for more buzz, 8000 for less.
+#define HAPTIC_GATE_MS 5000u
 
 static OwuiErrorCode dictation_status_to_error(int status) {
   switch (status) {
@@ -34,6 +45,7 @@ static void on_dictation_done(const char *utterance) {
   state_set_pending_user_text(utterance);
   state_set(STATE_SENDING);
   transport_send_utterance(utterance);
+  // STATE_WAITING stamps s_query_start_ms inside state_set().
   state_set(STATE_WAITING);
 }
 
@@ -47,6 +59,12 @@ static void on_dictation_fail(int status) {
 }
 
 static void on_response(char *owned_response) {
+  // Critical-2: buzz only if the reply took longer than the gate threshold.
+  // This prevents buzz spam on fast (sub-5s) replies while still alerting
+  // the user when an AI task took a while to complete.
+  if (state_query_elapsed_ms() >= HAPTIC_GATE_MS) {
+    vibes_short_pulse();
+  }
   state_commit_turn(owned_response);
   state_set(STATE_SHOWING);
 }

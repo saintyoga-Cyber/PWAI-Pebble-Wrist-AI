@@ -44,3 +44,9 @@ const char *state_font_key(void);
 // PWAI: active provider (0=Perplexity, 1=Claude)
 int  state_provider(void);
 void state_set_provider(int p);
+
+// Critical-2: query-start timestamp for haptic gate.
+// state_mark_query_start() is called automatically by state_set(STATE_WAITING).
+// state_query_elapsed_ms() returns ms since the query was sent, or 0 if not waiting.
+void     state_mark_query_start(void);
+uint32_t state_query_elapsed_ms(void);
