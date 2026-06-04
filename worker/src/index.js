@@ -115,13 +115,14 @@ export default {
 
       const id  = env.JOB_SOCKET.idFromName(jobId);
       const obj = env.JOB_SOCKET.get(id);
-      // Forward the original WS upgrade request to the Durable Object.
-      return obj.fetch(
-        new Request(`https://internal/ws?action=connect`, {
-          method:  'GET',
-          headers: request.headers
-        })
-      );
+
+      // Build the DO URL with action=connect, then forward the ORIGINAL request
+      // object so all WS upgrade headers (Upgrade, Connection, Sec-WebSocket-Key)
+      // are preserved exactly as Cloudflare's runtime expects.
+      const doUrl = new URL(request.url);
+      doUrl.pathname = '/ws';
+      doUrl.searchParams.set('action', 'connect');
+      return obj.fetch(new Request(doUrl.toString(), request));
     }
 
     // ── POST /register ────────────────────────────────────────────────────
