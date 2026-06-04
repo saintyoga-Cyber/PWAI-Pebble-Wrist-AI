@@ -15,15 +15,13 @@
  *   • "PebbleReminder" — accepts Text input, creates Reminder from it.
  *     Optional: also accept a "date" param via URL scheme for due date.
  *   • "PebbleNote"     — accepts Text input, creates Note from it.
- *
- * ACTION REQUIRED: replace API_BASE with your deployed Cloudflare Worker URL.
  */
 
 var chunker = require('./chunker');
 var config  = require('./config');
 
 // --- CONFIGURE THIS ---
-var API_BASE = 'https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev';
+var API_BASE = 'https://pwai-worker.saintyoga.workers.dev';
 // ----------------------
 
 var POLL_INTERVAL_MS = 15000;
@@ -82,8 +80,6 @@ function startPolling(jobId, shortcutFallbackArgs) {
           });
 
         } else if (data.status === 'tool_failed') {
-          // Claude could not create the Reminder via tool_use.
-          // Trigger the iOS Shortcut fallback if we have the args.
           stopPolling(); activeJobId = null; inflight = false;
           var args = pendingShortcutArgs;
           pendingShortcutArgs = null;
@@ -288,10 +284,6 @@ function isNoteLike(text) {
   return false;
 }
 
-/**
- * Classify the utterance into one of: 'reminder', 'note', 'ai'.
- * 'ai' means route to the existing chat/LLM path.
- */
 function classifyIntent(text) {
   var t = text.toLowerCase();
 
@@ -300,7 +292,7 @@ function classifyIntent(text) {
   var qWords = ['what ','how ','why ','who ','where ','when ','is ','are ','can ',
                 'could ','should ','will ','would ',"what's","how's",
                 'was ','wie ','warum ','wer ','wo ','wann ','ist ','sind ','kann ',
-                'quoi ','comment ','pourquoi ','qui ','où ','quand ',
+                'quoi ','comment ','pourquoi ','qui ','ù ','quand ',
                 'qué ','cómo ','por qué ','quién ','dónde '];
   var aiPhrases = ['explain','tell me','help me','define ','look up','search for',
                    'give me','translate','erkläer','sag mir','explique','dis-moi',
@@ -334,13 +326,6 @@ function classifyIntent(text) {
 
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
-/**
- * triggerReminderShortcut: opens the iOS "PebbleReminder" Shortcut.
- * Shortcut setup:
- *   Name: PebbleReminder
- *   - Receive Text from Shortcut Input
- *   - Add New Reminder with [Text Input] due [date parsed from text if present]
- */
 function triggerReminderShortcut(text, dueDate, dueTime) {
   var input = text;
   if (dueDate) {
@@ -356,13 +341,6 @@ function triggerReminderShortcut(text, dueDate, dueTime) {
   chunker.sendChunked('Reminder queued via Shortcuts.', {});
 }
 
-/**
- * triggerNoteShortcut: opens the iOS "PebbleNote" Shortcut.
- * Shortcut setup:
- *   Name: PebbleNote
- *   - Receive Text from Shortcut Input
- *   - Create Note with name [timestamp] and body [Text Input]
- */
 function triggerNoteShortcut(text) {
   var url = 'shortcuts://run-shortcut?name=' +
             encodeURIComponent('PebbleNote') +
@@ -376,12 +354,6 @@ function triggerNoteShortcut(text) {
 // DESTINATION HANDLERS
 // ============================================================================
 
-/**
- * sendToReminders:
- *   - Claude selected  → POST /reminder → poll for ready/tool_failed
- *                        tool_failed    → triggerReminderShortcut (fallback)
- *   - Perplexity       → triggerReminderShortcut directly
- */
 function sendToReminders(text) {
   var dueDate = extractDueDate(text);
   var dueTime = dueDate ? extractTime(text) : null;
@@ -430,9 +402,6 @@ function sendToReminders(text) {
   });
 }
 
-/**
- * sendToNotes: always uses the iOS Shortcut (no native API exists).
- */
 function sendToNotes(text) {
   triggerNoteShortcut(text);
 }
@@ -455,7 +424,6 @@ function handleUserMessage(text) {
     return;
   }
 
-  // Default: AI chat path (unchanged from v0.2)
   if (inflight) { chunker.sendErrorCode(12 /* ERR_BUSY */); return; }
   if (!API_BASE || API_BASE.indexOf('YOUR-WORKER') !== -1) {
     chunker.sendErrorCode(5 /* ERR_BAD_API_KEY */); return;
