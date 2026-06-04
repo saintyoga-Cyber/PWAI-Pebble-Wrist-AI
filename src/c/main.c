@@ -43,32 +43,17 @@
 
 static void worker_send(uint16_t type) {
   AppWorkerMessage msg = { .data0 = 0, .data1 = 0, .data2 = 0 };
-  // Launch worker if not running, then send.
   AppWorkerResult res = app_worker_launch();
-  // APP_WORKER_RESULT_RUNNING means it was already up; both are fine.
   if (res == APP_WORKER_RESULT_SUCCESS || res == APP_WORKER_RESULT_RUNNING) {
     app_worker_send_message(type, &msg);
   }
 }
 
-// Called by the worker when a background reply is ready.
-// The foreground app may or may not be visible when this fires.
 static void on_worker_message(uint16_t type, AppWorkerMessage *msg) {
   if (type != WORKER_MSG_REPLY_READY) return;
-
-  // Clear the persist flag so the worker doesn't fire again.
   persist_delete(PERSIST_KEY_PENDING_JOB);
-
-  // Background wake: always buzz — this IS the notification.
   vibes_short_pulse();
-
-  // If state is already SHOWING (foreground was open and got the reply
-  // through the normal transport path), do nothing further.
   if (state_current() == STATE_SHOWING) return;
-
-  // Foreground was closed or in a different state: show the response window.
-  // The latest turn was already committed by transport when JS wrote to persist,
-  // so ui_response_show() will render the correct content.
   state_set(STATE_SHOWING);
 }
 
@@ -90,9 +75,7 @@ static void on_dictation_done(const char *utterance) {
   state_set_pending_user_text(utterance);
   state_set(STATE_SENDING);
   transport_send_utterance(utterance);
-  // STATE_WAITING stamps s_query_start_ms inside state_set() (Critical-2).
   state_set(STATE_WAITING);
-  // Critical-3: tell worker a job is in flight so it starts polling.
   worker_send(WORKER_MSG_JOB_STARTED);
 }
 
@@ -113,11 +96,8 @@ static void on_dictation_fail(int status) {
 // ---------------------------------------------------------------------------
 
 static void on_response(char *owned_response) {
-  // Critical-3: clear job from worker since reply arrived via foreground path.
   worker_send(WORKER_MSG_JOB_CLEAR);
   persist_delete(PERSIST_KEY_PENDING_JOB);
-
-  // Critical-2: buzz only if the reply took longer than the gate threshold.
   if (state_query_elapsed_ms() >= HAPTIC_GATE_MS) {
     vibes_short_pulse();
   }
@@ -141,7 +121,6 @@ static void init(void) {
   dictation_init(on_dictation_done, on_dictation_fail);
   transport_init(on_response, on_transport_error);
   state_init();
-  // Critical-3: subscribe to worker messages before anything else.
   app_worker_message_subscribe(on_worker_message);
   transport_send_reset();
   transport_send_provider(state_provider());
