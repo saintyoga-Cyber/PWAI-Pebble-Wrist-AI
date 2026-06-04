@@ -3,12 +3,12 @@
   "shortName": "PWAI",
   "longName": "Pebble Wrist AI",
   "companyName": "saintyoga-Cyber",
-  "versionLabel": "0.2.0",
+  "versionLabel": "0.3.0",
   "sdkVersion": "3",
   "watchapp": {
     "watchface": false
   },
-  "capabilities": ["configurable"],
+  "capabilities": ["configurable", "background_worker"],
   "resources": {
     "media": []
   },

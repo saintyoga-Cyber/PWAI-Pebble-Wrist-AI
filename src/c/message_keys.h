@@ -23,3 +23,31 @@ typedef enum {
   ERR_TRANSPORT_FAILED      = 11,
   ERR_BUSY                  = 12,
 } OwuiErrorCode;
+
+// ---------------------------------------------------------------------------
+// Background Worker <-> Foreground App message types (AppWorkerMessage.type)
+// ---------------------------------------------------------------------------
+
+// Worker sends this to the foreground app when it detects a pending AI reply
+// stored in persistent storage. The foreground app responds by launching,
+// buzzing the wrist, and showing the response window.
+#define WORKER_MSG_REPLY_READY   1u
+
+// Foreground app sends this to the worker to tell it a job is in flight.
+// The worker will start polling until the reply lands or the job clears.
+#define WORKER_MSG_JOB_STARTED   2u
+
+// Foreground app sends this to the worker to clear any pending job
+// (e.g. user cancelled, error received). Worker stops polling.
+#define WORKER_MSG_JOB_CLEAR     3u
+
+// ---------------------------------------------------------------------------
+// Persistent storage keys (persist_read / persist_write)
+// ---------------------------------------------------------------------------
+
+// Set to 1 by PebbleKit JS (via AppMessage -> foreground -> persist_write)
+// when the server reply has been fully reassembled in the JS layer but the
+// foreground app is not running. The worker polls this key every
+// WORKER_POLL_INTERVAL_MS and fires WORKER_MSG_REPLY_READY when it sees 1.
+// Cleared by the foreground app after it reads and displays the reply.
+#define PERSIST_KEY_PENDING_JOB  100u
