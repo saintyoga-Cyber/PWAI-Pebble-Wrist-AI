@@ -20,7 +20,8 @@ def configure(ctx):
 
 def build(ctx):
     ctx.load('pebble_sdk')
-    build_worker = os.path.exists('worker_src')
+    # FIX-1: worker lives at src/worker/ (not the legacy worker_src/ path).
+    build_worker = os.path.exists('src/worker')
     binaries = []
     cached_env = ctx.env
     for platform in ctx.env.TARGET_PLATFORMS:
@@ -31,7 +32,7 @@ def build(ctx):
         if build_worker:
             worker_elf = '{}/pebble-worker.elf'.format(ctx.env.BUILD_DIR)
             binaries.append({'platform': platform, 'app_elf': app_elf, 'worker_elf': worker_elf})
-            ctx.pbl_build(source=ctx.path.ant_glob('worker_src/c/**/*.c'),
+            ctx.pbl_build(source=ctx.path.ant_glob('src/worker/**/*.c'),
                           target=worker_elf, bin_type='worker')
         else:
             binaries.append({'platform': platform, 'app_elf': app_elf})
