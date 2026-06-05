@@ -1,6 +1,6 @@
 # PWAI Fix Plan — Code Assessment (June 2026)
 
-> **Status:** FIX-1 and FIX-2 approved — in progress.
+> **Status:** FIX-1 ✅ FIX-2 ✅ — both critical fixes applied. FIX-3/4/5 pending approval.
 > **Last updated:** 2026-06-05
 
 ---
@@ -8,13 +8,9 @@
 ## Summary
 
 Full code audit of `main` branch post-merge of Critical-1 through Critical-4.
-The architecture is solid. All 4 critical merges landed. However, there are
-**2 build-breaking issues** and **2 missing worker-lifecycle calls** that will
-prevent the background worker from ever running. One orphan file set also
-needs cleanup.
-
-Fixes are ordered by severity. **Each critical fix is its own isolated change.**
-No fix shall be bundled with another.
+The architecture is solid. All 4 critical merges landed. The 2 build-breaking
+and functionality-breaking issues have now been fixed (FIX-1 & FIX-2).
+Remaining items are cleanup only and do not affect build or runtime.
 
 ---
 
@@ -23,56 +19,30 @@ No fix shall be bundled with another.
 ### 🔴 FIX-1 — wscript: wrong worker source path (BUILD-BREAKING)
 
 **File:** `wscript`  
-**Severity:** Critical — worker binary is never compiled  
-**Blocks:** Background worker feature (Critical-3 & Critical-4)  
-**Status:** ✅ APPLIED
+**Status:** ✅ APPLIED — commit [`be0e8f1`](https://github.com/saintyoga-Cyber/PWAI-Pebble-Wrist-AI/commit/be0e8f1014a337502ecb0a75a63803bf48564ae0)
 
-**Root cause:**  
-The `wscript` build script checks for the worker at `worker_src/` (legacy path):
+`worker_src/` never existed; `worker.c` lives at `src/worker/worker.c`
+since the Critical-3 merge. `build_worker` was always `False`, so the
+worker binary was never compiled into the `.pbw`.
 
-```python
-build_worker = os.path.exists('worker_src')
-# ...
-ctx.pbl_build(source=ctx.path.ant_glob('worker_src/c/**/*.c'), ...)
-```
-
-But `worker.c` was placed at `src/worker/worker.c` during the Critical-3 merge.
-The `worker_src/` directory does not exist, so `build_worker` is always `False`.
-The worker binary is never built into the `.pbw`.
-
-**Applied fix:**
-
-```python
-# Before:
-build_worker = os.path.exists('worker_src')
-ctx.pbl_build(source=ctx.path.ant_glob('worker_src/c/**/*.c'), ...)
-
-# After:
-build_worker = os.path.exists('src/worker')
-ctx.pbl_build(source=ctx.path.ant_glob('src/worker/**/*.c'), ...)
-```
+Fixed: changed existence check and `ant_glob` path to `src/worker/`.
 
 ---
 
 ### 🔴 FIX-2 — src/c/main.c: worker lifecycle calls missing (FUNCTIONALITY-BREAKING)
 
 **File:** `src/c/main.c`  
-**Severity:** Critical — background worker is never started or stopped  
-**Blocks:** Background worker feature end-to-end  
-**Status:** ✅ APPLIED
+**Status:** ✅ APPLIED — commit [`dc79465`](https://github.com/saintyoga-Cyber/PWAI-Pebble-Wrist-AI/commit/dc794657a93f43533a116a00d2b3d99ad653419c)
 
-**Root cause:**  
-`worker.c` is designed to be launched by the foreground app via
-`app_worker_launch()` when a query is in-flight (STATE_WAITING), and killed via
-`app_worker_kill()` after the reply is displayed. Neither call existed in
-`src/c/main.c`. The worker also expected `WORKER_MSG_JOB_STARTED` to begin
-polling — also missing.
+The worker binary (now correctly built by FIX-1) was never launched,
+never signalled, and the persist flag was never cleared.
 
-**Applied fix (3 additions to `src/c/main.c`):**
+Fixed with 3 additions to `src/c/main.c`:
+1. `on_dictation_done()` — `app_worker_launch()` + `WORKER_MSG_JOB_STARTED`.
+2. `on_response()` — `persist_delete(PERSIST_KEY_PENDING_JOB)` + `WORKER_MSG_JOB_CLEAR`.
+3. `on_transport_error()` — same cleanup so errors don’t leave worker polling forever.
 
-1. `on_dictation_done()` — launch worker + send `WORKER_MSG_JOB_STARTED`.
-2. `on_response()` — `persist_delete(PERSIST_KEY_PENDING_JOB)` + send `WORKER_MSG_JOB_CLEAR`.
-3. `on_transport_error()` — `persist_delete(PERSIST_KEY_PENDING_JOB)` + send `WORKER_MSG_JOB_CLEAR`.
+A `worker_clear_job()` helper was added to deduplicate items 2 & 3.
 
 ---
 
@@ -122,7 +92,7 @@ polling — also missing.
 | `background_worker` capability declared in `appinfo.json` | ✅ Present |
 | Critical-2 haptic gate (5s threshold, `state_query_elapsed_ms()`) | ✅ Implemented in `state.c` + `main.c` |
 | Critical-4 `persist_write` landing in correct file (`transport.c`) | ✅ Confirmed |
-| `CHUNK_SIZE` in `message_keys.h` (2048) vs `src/pkjs/chunker.js` | ✅ Verified — both 2048, MAX_CHUNKS both 16 |
+| `CHUNK_SIZE` in `message_keys.h` (2048) vs `src/pkjs/chunker.js` | ✅ Both 2048, MAX_CHUNKS both 16 |
 | Chunker ack-gated sending matches `send_chunk_ack()` in `transport.c` | ✅ Consistent |
 | Worker `PERSIST_KEY_PENDING_JOB` mirror value (100u) | ✅ Matches `message_keys.h` |
 | Worker does NOT clear the flag (foreground owns it) | ✅ Correct in `worker.c` |
@@ -133,24 +103,16 @@ polling — also missing.
 ## Fix Execution Order
 
 ```
-FIX-1 ✅  →  FIX-2 ✅  →  FIX-3 + FIX-4 (can be one commit)  →  FIX-5
+FIX-1 ✅  →  FIX-2 ✅  →  FIX-3 + FIX-4 (pending)  →  FIX-5 (pending)
 ```
-
-FIX-1 and FIX-2 are **critical** and must each be a standalone, single-purpose
-commit. FIX-3 and FIX-4 are cleanup and can be combined. FIX-5 is branch
-deletion only.
 
 ---
 
 ## Open Questions
 
-1. ~~**`src/pkjs/chunker.js`** — CHUNK_SIZE verified: both sides 2048, MAX_CHUNKS 16. ✅ Closed.~~
+1. ~~`src/pkjs/chunker.js` CHUNK_SIZE — verified: both 2048, MAX_CHUNKS 16. ✅ Closed.~~
 
-2. **`scroll_layer_set_click_config_onto_window` in `src/main.c` (v1)** —
-   In the orphan file only; v2 handles clicks in `ui_response.c` / `ui_idle.c`.
-   No action needed, but confirm during live testing.
-
-3. **Worker not auto-relaunched after watch reboot** — By design per `worker.c`
+2. **Worker not auto-relaunched after watch reboot** — By design per `worker.c`
    comments. Acceptable trade-off. Document in README if desired.
 
 ---
