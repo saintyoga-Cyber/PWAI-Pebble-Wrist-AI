@@ -16,9 +16,15 @@
  *   - Fast, immediate replies are silent — no buzz spam.
  *   - Slow or background replies (network hiccup, Claude reasoning, etc.)
  *     get a single buzz to alert the user without them watching the screen.
+ *
+ * FIX-2: worker lifecycle
+ *   - app_worker_launch() + WORKER_MSG_JOB_STARTED on query dispatch.
+ *   - persist_delete(PERSIST_KEY_PENDING_JOB) + WORKER_MSG_JOB_CLEAR
+ *     on reply received or error, so the worker stops polling.
  */
 
 #include <pebble.h>
+#include <pebble_worker.h>
 #include "state.h"
 #include "dictation.h"
 #include "transport.h"
@@ -30,6 +36,24 @@
 // Minimum elapsed query time (ms) before a haptic buzz fires on reply.
 // 5 000 ms = 5 seconds. Tune freely: 3000 for more buzz, 8000 for less.
 #define HAPTIC_GATE_MS 5000u
+
+// ---------------------------------------------------------------------------
+// Worker helpers
+// ---------------------------------------------------------------------------
+
+static void worker_signal(uint16_t type) {
+  AppWorkerMessage msg = { .data0 = 0, .data1 = 0, .data2 = 0 };
+  app_worker_send_message(type, &msg);
+}
+
+static void worker_clear_job(void) {
+  persist_delete(PERSIST_KEY_PENDING_JOB);
+  worker_signal(WORKER_MSG_JOB_CLEAR);
+}
+
+// ---------------------------------------------------------------------------
+// Dictation callbacks
+// ---------------------------------------------------------------------------
 
 static OwuiErrorCode dictation_status_to_error(int status) {
   switch (status) {
@@ -47,6 +71,13 @@ static void on_dictation_done(const char *utterance) {
   transport_send_utterance(utterance);
   // STATE_WAITING stamps s_query_start_ms inside state_set().
   state_set(STATE_WAITING);
+  // FIX-2: launch the background worker so it can detect the reply even
+  // if the user closes the foreground app while waiting.
+  AppWorkerResult wr = app_worker_launch();
+  if (wr == APP_WORKER_RESULT_SUCCESS ||
+      wr == APP_WORKER_RESULT_ALREADY_RUNNING) {
+    worker_signal(WORKER_MSG_JOB_STARTED);
+  }
 }
 
 static void on_dictation_fail(int status) {
@@ -58,10 +89,15 @@ static void on_dictation_fail(int status) {
   state_set_error(dictation_status_to_error(status));
 }
 
+// ---------------------------------------------------------------------------
+// Transport callbacks
+// ---------------------------------------------------------------------------
+
 static void on_response(char *owned_response) {
+  // FIX-2: clear the pending-job persist flag (set by transport.c when all
+  // chunks arrived) and tell the worker to stop polling.
+  worker_clear_job();
   // Critical-2: buzz only if the reply took longer than the gate threshold.
-  // This prevents buzz spam on fast (sub-5s) replies while still alerting
-  // the user when an AI task took a while to complete.
   if (state_query_elapsed_ms() >= HAPTIC_GATE_MS) {
     vibes_short_pulse();
   }
@@ -70,8 +106,14 @@ static void on_response(char *owned_response) {
 }
 
 static void on_transport_error(OwuiErrorCode code) {
+  // FIX-2: also clear the worker on error so it does not poll forever.
+  worker_clear_job();
   state_set_error(code);
 }
+
+// ---------------------------------------------------------------------------
+// App lifecycle
+// ---------------------------------------------------------------------------
 
 static void init(void) {
   ui_idle_init();
