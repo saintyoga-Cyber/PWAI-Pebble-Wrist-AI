@@ -499,10 +499,13 @@ mergeable with upstream.
   1:1. Keep the websocket prefix protocol byte-identical so the watchapp
   needs **zero changes**.
 - Port `verifier.go` the same way.
-- Model: default `claude-opus-4-8` (current best general model; exact ID,
-  no date suffix). If cost becomes a concern the user may choose
-  `claude-haiku-4-5` for the verifier and/or `claude-sonnet-4-6` for chat —
-  user's call, not a default.
+- **Model (decided 2026-06-11): `claude-haiku-4-5` for both chat and
+  verifier** (user's choice — fastest/cheapest tier; advisor note on record:
+  it is the same speed-tier class as Gemini 2.5 Flash, so if answer quality
+  disappoints, step up to `claude-sonnet-4-6`). Implementation requirement:
+  expose the model IDs as config/env vars (`CHAT_MODEL`, `VERIFIER_MODEL`)
+  so changing tier is a deploy-time setting, not a code change. Exact ID
+  strings only — no date suffixes.
 - `persistence.go`: replace genai types in `SerializedMessage` with neutral
   ones (role/content/toolName/toolArgs/toolResult) — do this in the same
   phase since the wire format changes anyway. Old 10-min threads just expire.
@@ -536,5 +539,18 @@ moot except as lessons learned.
 B0 ≈ an evening (mostly infra). B1 ≈ tiny. B2 ≈ the bulk — a few focused
 sessions (one file does most of the work: `session.go`). B3 ≈ 1–2 sessions.
 B4 ≈ 1 session.
+
+## Fork logistics (recorded 2026-06-11)
+
+The fork could not be performed from the review session (GitHub access is
+scoped to `Sports-simplified` and `PWAI-Pebble-Wrist-AI` only). Manual steps
+for the user:
+1. Open https://github.com/pebble-dev/bobby-assistant → **Fork** →
+   create `saintyoga-Cyber/bobby-assistant`.
+2. Grant the Claude GitHub app access to the new fork
+   (github.com/settings/installations → Claude → Repository access), then
+   include the fork when starting the next Claude Code session.
+Once the fork is in scope, work proceeds on a feature branch there starting
+with B0/B1.
 
 *Plan recorded 2026-06-11. No code changed yet; next concrete step is B0.*
