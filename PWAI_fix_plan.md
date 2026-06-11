@@ -437,3 +437,104 @@ needed now beyond keeping providers pluggable.
    "Jarvis on the wrist".
 
 *No code changed; this section records the strategy discussion of 2026-06-11.*
+
+---
+---
+
+# Bobby Fork Plan — 2026-06-11 (decision: fork Bobby, Claude brain, persistent memory)
+
+Decision recorded: the user already runs Bobby (~80% of the goal). Missing
+pieces: persistent memory, and Claude/Perplexity quality instead of Gemini.
+Plan below is based on a code review of `pebble-dev/bobby-assistant@main`
+(cloned 2026-06-11). License: Apache 2.0 — forking + modifying is fine;
+keep the license and Google copyright headers.
+
+## How Bobby actually works (code-verified)
+
+- **Watchapp (`app/`)**: C + pkjs. Talks to the service over a **websocket**
+  with a 1-byte-prefix protocol: `c`=content word, `f`=function summary,
+  `a`=action request to watch, `w`=warning, `d`=done, `t`=threadId.
+  Only change ever needed here: `app/src/pkjs/urls.js` → your server.
+- **Service (`service/`, Go)**: `session.go` runs the agent loop
+  (stream → collect function call → execute → append result → repeat).
+  A registry (`functions/functions.go`) declares tools as
+  `genai.FunctionDeclaration` + Go input structs; **actions** (reminders,
+  alarms, settings) round-trip to the watch via `a`-messages — this is how
+  reminder pins get set, and it is **provider-agnostic** (no change needed).
+- **Gemini coupling is localized**: `session.go` (client + loop,
+  `gemini-2.5-flash`), `verifier/verifier.go` (anti-hallucination "lie
+  detector", `gemini-2.5-flash-lite`), `persistence.go` (genai types inside
+  `SerializedMessage`), `functions/*` + `widgets/*` (declaration types only).
+- **Memory today**: Redis threads with a **10-minute TTL**
+  (`persistence.go: r.Set(…, 10*time.Minute)`) — short-term only, by design.
+- **Self-host gate**: `session.go:117` and `assistant.go:66` require
+  `HasSubscription` from `USER_IDENTIFICATION_URL` (Rebble's
+  user-identifier). Quota tracking (`quota/`) assumes the same.
+- Deployment: `Dockerfile-service` exists; needs a host that supports
+  long-lived websockets + Redis (small VPS / Fly.io / Railway / home box —
+  **not** Cloudflare Workers).
+
+## Phases (each standalone; critical ones never bundled)
+
+### B0 — Fork + vanilla self-host (no code)
+Fork to `saintyoga-Cyber/bobby-assistant`. Run `service/` via
+`Dockerfile-service` + Redis, set `GEMINI_KEY`, `USER_IDENTIFICATION_URL`
+(Rebble's), `MAPBOX_KEY` optional. Point `app/src/pkjs/urls.js` at it,
+build watchapp (cloud.repebble.com), confirm parity with hosted Bobby.
+
+### B1 🔴 — Self-host switch
+Add `SELF_HOSTED=1` config flag: when set, skip the `HasSubscription`
+check and give `quota.Tracker` an effectively-unlimited budget
+(3 call sites: `session.go`, `assistant.go`, `quota/`). Keeps the fork
+mergeable with upstream.
+
+### B2 🔴 — Claude provider (the big one)
+- Add `github.com/anthropics/anthropic-sdk-go`; new small `llm/` package.
+- Convert the registry's `genai.FunctionDeclaration` → Anthropic tool
+  (name/description/JSON-schema input) — one converter function; the
+  registry itself stays genai-typed so `functions/*` are untouched.
+- Rewrite the `session.go` loop on the Anthropic Messages API:
+  streaming + manual tool loop (`stop_reason == "tool_use"` →
+  run function → append `tool_result` → continue). The existing loop maps
+  1:1. Keep the websocket prefix protocol byte-identical so the watchapp
+  needs **zero changes**.
+- Port `verifier.go` the same way.
+- Model: default `claude-opus-4-8` (current best general model; exact ID,
+  no date suffix). If cost becomes a concern the user may choose
+  `claude-haiku-4-5` for the verifier and/or `claude-sonnet-4-6` for chat —
+  user's call, not a default.
+- `persistence.go`: replace genai types in `SerializedMessage` with neutral
+  ones (role/content/toolName/toolArgs/toolResult) — do this in the same
+  phase since the wire format changes anyway. Old 10-min threads just expire.
+
+### B3 🔴 — Persistent memory (the missing 20%)
+- Keyed by Rebble `user_id` (already available from `GetUserInfo`).
+- Two new registry **functions**: `remember(text, optional key)` and
+  `forget(key)` storing into a Redis hash `memory:<user_id>`; plus
+  injection of all stored memories into the system prompt
+  (`system_prompt.go` builds it per request — append a "Things you know
+  about the user" section). Small enough that no retrieval/RAG is needed
+  until memories grow large.
+- Infra: enable Redis persistence (AOF) or use a managed Redis — the
+  README's "in-memory is fine" no longer holds once memory matters.
+- Raise/remove the 10-minute thread TTL deliberately (e.g. 24 h) so
+  conversations survive longer, distinct from permanent memories.
+
+### B4 🟡 — Perplexity as the search tool
+Keep Claude as the brain; add a `web_search` registry function backed by
+Perplexity `sonar` (simple HTTPS call). This gives "Claude quality +
+PPX freshness" in one flow instead of a provider toggle. (Alternative:
+Anthropic's server-side `web_search` tool — fewer moving parts, but uses
+Anthropic's search rather than Perplexity.)
+
+### B5 🔵 — PWAI disposition
+Archive PWAI (or keep as sandbox). Its one feature worth porting later:
+provider/persona toggle on the idle screen. The R-series fixes become
+moot except as lessons learned.
+
+## Effort estimate
+B0 ≈ an evening (mostly infra). B1 ≈ tiny. B2 ≈ the bulk — a few focused
+sessions (one file does most of the work: `session.go`). B3 ≈ 1–2 sessions.
+B4 ≈ 1 session.
+
+*Plan recorded 2026-06-11. No code changed yet; next concrete step is B0.*
