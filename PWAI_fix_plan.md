@@ -1,7 +1,7 @@
 # PWAI Fix Plan — Code Assessment (June 2026)
 
 > **Status:** FIX-1 ✅ FIX-2 ✅ FIX-3 ✅ FIX-4 ✅ FIX-5 ⚠️ (see below — one branch is NOT merged).
-> **Last updated:** 2026-06-11 (implementation session) — Bobby fork plan (B0–B5) execution started.
+> **Last updated:** 2026-06-11 (implementation session) — B1–B4 implemented and pushed to the fork; B0 deploy + B5 decision remain.
 > ⚠️ The "codebase is clean" conclusion of the 2026-06-05 audit is **superseded** —
 > the v0.3 review found 7 critical issues (R1–R17). Per the strategic decision (S3),
 > the active vehicle is now the **Bobby fork** (`saintyoga-Cyber/bobby-assistant-PWAI`);
@@ -559,11 +559,50 @@ source of truth for plan + status.
 |---|---|
 | Plan doc consolidated onto this branch (was stranded on `claude/pebble-wrist-ai-review-okxhor`) | ✅ |
 | FIX-5 | ⚠️ 3/4 already deleted; last branch found **unmerged** — user decision required (see FIX-5) |
-| B1 — `SELF_HOSTED=1` switch | 🔄 in progress |
-| B2 — Claude provider (`CHAT_MODEL`/`VERIFIER_MODEL` env, default `claude-haiku-4-5`) | 🔄 in progress |
-| B3 — persistent memory (`remember`/`forget` + system-prompt injection) | ⏳ queued |
-| B4 — Perplexity `web_search` function | ⏳ queued |
-| B5 — PWAI disposition | ⏳ user decision after B2/B3 proven |
+| B1 — `SELF_HOSTED=1` switch | ✅ `701cfa4` |
+| B2 — Claude provider (`CHAT_MODEL`/`VERIFIER_MODEL` env, default `claude-haiku-4-5`) | ✅ `1778692` |
+| B3 — persistent memory (`remember`/`forget` + system-prompt injection, thread TTL 10m→24h) | ✅ `2778f11` |
+| B4 — Perplexity `web_search` function (registered only when `PERPLEXITY_API_KEY` is set) | ✅ `33cea49` |
+| README updated for new env vars | ✅ `2125ee0` |
+| B0 — self-host deployment | ⏳ user infra step (see below) |
+| B5 — PWAI disposition | ⏳ user decision after B2/B3 proven on-wrist |
 
-Each critical phase ships as its own standalone commit in the fork, per the
-bundling rule. Statuses above are updated as commits land.
+All commits are on branch `claude/pebble-apps-review-rx6bfr` of the fork;
+each critical phase is its own standalone commit per the bundling rule.
+`go build ./...` and `go vet` are clean after every phase (the only vet
+warnings are pre-existing upstream `poi.go` unkeyed-field notes).
+
+### Implementation notes (decisions made during the session)
+
+- **Watchapp untouched** — the websocket prefix protocol (`c`/`f`/`a`/`w`/`d`/`t`)
+  is byte-identical, as the plan required. Only `app/src/pkjs/urls.js` still
+  needs pointing at the user's server (B0).
+- **Persistence stays JSON-compatible** — `SerializedMessage` now uses neutral
+  `FunctionCall`/`FunctionResponse` types whose JSON tags match the old genai
+  shapes, so the feedback report template and in-flight Redis threads keep
+  working. Pre-migration threads restore with synthesized tool-use IDs.
+- **Widget streaming guard** — Anthropic text deltas are smaller than Gemini
+  chunks and can split a `<!…!>` marker anywhere, so the widget buffer also
+  holds when a delta ends in `<`.
+- **Tool forcing after 10 iterations** — the Anthropic API requires tool
+  definitions whenever history contains `tool_use` blocks, so instead of
+  dropping the tools (Gemini approach), iteration >10 sets `tool_choice: none`.
+- **Verifier** — ported to a forced `report_actions` tool call; timeout raised
+  1.5s → 3s for Haiku response times. Still non-fatal on failure.
+- **Quota pricing constants** are still Gemini-calibrated (12/2/100 credits).
+  Cosmetic for self-hosted deployments (cap is lifted); recalibrate to Haiku
+  pricing ($1/$5 per MTok) only if cost dashboards must be accurate.
+- **Redis must persist now** (AOF or managed) — memories survive restarts only
+  if Redis does.
+
+### B0 — remaining user steps to go live
+
+1. Deploy `service/` (via `Dockerfile-service`) + Redis with persistence.
+   Env: `ANTHROPIC_API_KEY`, `SELF_HOSTED=1`, `REDIS_URL`,
+   `USER_IDENTIFICATION_URL` (Rebble's), optional `MAPBOX_KEY`,
+   `PERPLEXITY_API_KEY`, `CHAT_MODEL`/`VERIFIER_MODEL` overrides.
+2. Point `app/src/pkjs/urls.js` at the deployed server.
+3. Build the watchapp on cloud.repebble.com and install.
+4. Smoke-test: chat, a reminder (round-trips via `a`-message → timeline pin),
+   "remember that …" then a new conversation to confirm memory injection,
+   and a current-events question to confirm `web_search`.
