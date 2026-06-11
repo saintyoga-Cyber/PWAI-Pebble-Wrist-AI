@@ -351,3 +351,89 @@ Each line = one standalone change, in this order:
 
 *Review performed 2026-06-11. No code or infrastructure was modified;
 only this planning document was updated.*
+
+---
+---
+
+# Strategic Assessment — 2026-06-11 (rebuild vs fix vs hook into ecosystem)
+
+Question under review: before spending energy on R1–R17, is a complete
+rebuild better? Can Apple's foundation models be used? Can PWAI hook into
+the Pebble Index / Pebble-app agent pipeline instead of recreating the wheel?
+
+## S1 — Rebuild vs fix: do NOT rebuild from scratch
+
+- The expensive, hard-to-get-right 60% of PWAI (C state machine, ACK-gated
+  chunk transport, dictation, bubble UI) is **good** and would just be
+  re-written identically in a rebuild.
+- The broken parts are concentrated in ~300 lines of Worker JS and the pkjs
+  network layer — replaceable piecemeal.
+- A rebuild re-introduces the same ecosystem traps (fetch, openURL,
+  background worker) unless the same lessons are applied anyway.
+
+**However** — see S3: the strongest option is neither "fix PWAI" nor
+"rebuild PWAI" but **fork Bobby**, which already exists as open source.
+
+## S2 — Apple Foundation Models: possible later, only via native code
+
+Facts (iOS 26, June 2026):
+- Apple's **FoundationModels framework** gives third-party apps direct,
+  free, offline access to the on-device ~3B model — **Swift only, native
+  iOS apps only**. There is **no cloud/server API** for third parties, so a
+  Cloudflare Worker can never call it.
+- PebbleKit JS cannot call native frameworks, and the Shortcuts route is
+  closed (R9: `Pebble.openURL` can't fire `shortcuts://`).
+
+Realistic paths, in increasing order of effort:
+1. **Provider abstraction now (cheap, do this):** keep the brain
+   server-side, but structure provider calls behind one interface so any
+   future phone-side brain slots in as "provider #3".
+2. **Contribute to the open-source Pebble iOS app** (Core Devices app is
+   100% open source): native Swift land where FoundationModels is callable —
+   this is plausibly where the ecosystem itself is heading for the Index's
+   on-device LLM.
+3. A separate native companion app via PebbleKit iOS — uncertain support in
+   the new app era; not recommended.
+
+Calibration: the on-device model is ~3B parameters — excellent for **intent
+parsing / reminder extraction / short answers** (free, offline), not a
+replacement for Claude/Perplexity on knowledge queries. Best future role:
+the classifier/extraction step, not the brain.
+
+**Decision:** revisit after the phone upgrade; no architectural change
+needed now beyond keeping providers pluggable.
+
+## S3 — The wheel already exists: Bobby (pebble-dev/bobby-assistant)
+
+- **Bobby is open source (Apache 2.0)** and is the featured Pebble appstore
+  app: watchapp + Go server (`service/`), Gemini-powered, with working
+  **timeline-pin reminders, timers, alarms, weather, calculator** and a
+  documented **self-host path** (`GEMINI_KEY`, `REDIS_URL`, edit
+  `app/src/pkjs/urls.js`).
+- PWAI is, functionally, a partial re-implementation of Bobby with
+  Claude/Perplexity instead of Gemini.
+- The **Index 01 ring** pipes its mic into the **open-source Pebble mobile
+  app**, whose on-device LLM handles notes/timers/alarms/reminders. As of
+  today there is **no public third-party plug-in API** into that pipeline —
+  hooking in means contributing native (Kotlin Multiplatform / Swift) code
+  to the app itself. Watchapps remain the supported third-party surface.
+
+### Recommended path (decision pending user approval)
+
+1. **This week:** self-host Bobby unmodified (Gemini free-tier key + Redis)
+   and use it for a few days. Zero code. Establishes the baseline.
+2. **If Bobby covers ~80% of the Jarvis goal:** fork it and add the missing
+   20% — an Anthropic/Perplexity provider in the Go service and a
+   persistent-memory store. That is far less work than driving PWAI to
+   feature parity, and inherits a battle-tested watch UX.
+3. **PWAI's role then:** either archive it, or keep it as the experimental
+   sandbox and port its best idea (provider toggle on the idle screen) to
+   the Bobby fork.
+4. **If instead PWAI stays the vehicle:** execute R1–R17 in the listed
+   order; the architecture after R6+R13 (server pushes pins; no background
+   worker) is sound.
+5. **Index ring:** monitor the open-source app for an extension surface as
+   the ring ships; until one exists, a Bobby-class watchapp is the practical
+   "Jarvis on the wrist".
+
+*No code changed; this section records the strategy discussion of 2026-06-11.*
