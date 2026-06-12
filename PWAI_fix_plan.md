@@ -606,3 +606,68 @@ warnings are pre-existing upstream `poi.go` unkeyed-field notes).
 4. Smoke-test: chat, a reminder (round-trips via `a`-message → timeline pin),
    "remember that …" then a new conversation to confirm memory injection,
    and a current-events question to confirm `web_search`.
+
+---
+---
+
+# Q&A — 2026-06-12 (cross-device memory · offline functionality)
+
+Both items below are **proposals only** — no code changed; awaiting user
+approval before becoming phases.
+
+## Q1 — Can Bobby access my Claude account (claude.ai) memories?
+
+**Directly: no.** claude.ai memory is specific to claude.ai and the official
+Claude apps — there is no API for third parties (including our service) to
+read it. Conversations can't be pulled either.
+
+What *is* possible:
+
+1. **Manual one-time import (works today, zero code):** claude.ai Settings →
+   Capabilities → "View and edit your memory" exports memory as text. On the
+   watch, telling Bobby "remember that …" stores items; or items can be
+   bulk-loaded into Redis (`HSET memory:<user_id> <key> <text>`).
+2. **🟡 B7 (proposed) — shared memory hub via MCP:** expose Bobby's Redis
+   memory store as a small remote MCP server (read/list/write tools). Add it
+   to claude.ai (phone/Mac) as a custom connector. Claude on phone/Mac then
+   reads/writes the *same* store Bobby injects into every prompt — true
+   cross-device memory, with our Redis as the source of truth rather than
+   Anthropic's siloed store. Effort ≈ 1–2 sessions (HTTP MCP server endpoint
+   on the existing Go service + auth token).
+
+## Q2 — Offline basics (timers/alarms/reminders), à la "Mic Drop"
+
+Reference: Reddit/Discord app **Mic Drop** — voice → deterministic text
+parsing → local actions, no AI/cloud. The pattern is valid for us.
+
+Current offline behavior of the fork:
+- **Already-set alarms & timers fire offline** — they live on the watch
+  (`app/src/c/alarms/manager.c`, wakeup API).
+- **Setting anything new needs internet** — every utterance round-trips to
+  the LLM service.
+- **Reminders need internet even today** — they're Rebble timeline pins
+  (`pkjs/actions/timeline.js` → timeline-api.rebble.io) + phone localStorage.
+
+Key enabler verified: the new Core Devices Pebble app has a
+**speech-recognition setting with a "Local Only" (on-device) option**, so
+dictation itself can work without internet (phone in BT range, no data
+needed). Pebble-era dictation was cloud-only; that blocker is gone.
+
+**🟡 B6 (proposed) — offline quick-commands layer in the watchapp:**
+after dictation returns text to the watch C code, run a small deterministic
+matcher *before* contacting the service:
+- "set a timer for N minutes/hours", "cancel the timer", "set an alarm for
+  H:MM" → execute directly via the existing on-watch alarms manager. Works
+  fully offline; also instant + free when online.
+- Anything unmatched → send to the service as today.
+- Phase 2 (optional): offline reminders as local wakeups, synced to the
+  timeline when connectivity returns (more complexity — separate decision).
+- Note: this is the first change to the watchapp (B1–B4 kept it untouched).
+
+**Zero-effort alternative:** install Mic Drop alongside Bobby — it already
+covers timer/calculator/converter offline; Bobby stays the online brain.
+
+**Apple Foundation Models** remain unnecessary for this: deterministic
+parsing covers the simple grammar, and the S2 analysis still holds (no
+PebbleKit JS path to native frameworks; revisit only via the open-source
+Pebble mobile app).
