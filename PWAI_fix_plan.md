@@ -627,13 +627,16 @@ What *is* possible:
    Capabilities → "View and edit your memory" exports memory as text. On the
    watch, telling Bobby "remember that …" stores items; or items can be
    bulk-loaded into Redis (`HSET memory:<user_id> <key> <text>`).
-2. **🟡 B7 (proposed) — shared memory hub via MCP:** expose Bobby's Redis
-   memory store as a small remote MCP server (read/list/write tools). Add it
-   to claude.ai (phone/Mac) as a custom connector. Claude on phone/Mac then
-   reads/writes the *same* store Bobby injects into every prompt — true
-   cross-device memory, with our Redis as the source of truth rather than
-   Anthropic's siloed store. Effort ≈ 1–2 sessions (HTTP MCP server endpoint
-   on the existing Go service + auth token).
+2. **✅ B7 (IMPLEMENTED) — shared memory hub via MCP** — commit `5c894d2`
+   (merged to `main`). The Go service now exposes a tools-only MCP server over
+   Streamable HTTP at `/mcp` (`list_memories`/`remember`/`forget`), operating
+   on the **same** `memory:<user_id>` Redis hash the watch injects into every
+   prompt. Add it to claude.ai as a custom connector (bearer token via
+   `MCP_AUTH_TOKEN`, scoped to `MCP_MEMORY_USER_ID`) and Claude on phone/Mac
+   shares memory with the watch. Verified end-to-end with an httptest round
+   trip against live Redis. Note: this shares *memories/facts*, not full
+   conversation hand-off — continuing a specific phone chat on the watch is
+   still not possible.
 
 ## Q2 — Offline basics (timers/alarms/reminders), à la "Mic Drop"
 
@@ -653,16 +656,24 @@ Key enabler verified: the new Core Devices Pebble app has a
 dictation itself can work without internet (phone in BT range, no data
 needed). Pebble-era dictation was cloud-only; that blocker is gone.
 
-**🟡 B6 (proposed) — offline quick-commands layer in the watchapp:**
-after dictation returns text to the watch C code, run a small deterministic
-matcher *before* contacting the service:
-- "set a timer for N minutes/hours", "cancel the timer", "set an alarm for
-  H:MM" → execute directly via the existing on-watch alarms manager. Works
-  fully offline; also instant + free when online.
-- Anything unmatched → send to the service as today.
-- Phase 2 (optional): offline reminders as local wakeups, synced to the
-  timeline when connectivity returns (more complexity — separate decision).
-- Note: this is the first change to the watchapp (B1–B4 kept it untouched).
+**✅ B6 (IMPLEMENTED) — offline quick-commands layer in the watchapp** —
+commit `9848a3c` (merged to `main`). `converse/offline_commands.{c,h}` runs a
+deterministic matcher on the transcribed prompt *before* contacting the
+service:
+- "set a timer for <duration>" (5 minutes, 1 hour 30 minutes, half an hour,
+  an hour and a half, twenty five minutes, 90 seconds — digits or number
+  words), "set an alarm for <time>" (7:30 am, seven thirty pm, noon,
+  midnight, 6 o'clock, seven oh five; ambiguous 12h picks soonest future),
+  and "cancel/stop/delete the timer|alarm" → executed directly via the
+  on-watch alarm manager (wakeup API). Works fully offline; instant + free
+  when online.
+- The matcher is **strict** (must consume the whole utterance), so compound
+  requests still fall through to the assistant. Verified with a host-side
+  harness over 22 cases (16 handled, 6 correctly passed through).
+- This was the first change to the watchapp (B1–B4 kept it untouched).
+- **Phase 2 (still open):** offline reminders as local wakeups synced to the
+  timeline when connectivity returns — more complex, deferred as a separate
+  decision.
 
 **Zero-effort alternative:** install Mic Drop alongside Bobby — it already
 covers timer/calculator/converter offline; Bobby stays the online brain.
